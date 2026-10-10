@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 import { visibleMusicServices } from '../public/service-visibility.js';
 
 const source = new URL('../public/', import.meta.url);
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.json': 'application/json', '.zip': 'application/zip' };
 const assets = {};
 async function visit(directory, prefix = '') {
   for (const entry of await readdir(directory, { withFileTypes: true })) {

@@ -7,6 +7,7 @@ import * as spotifyPlayer from './spotify-playback.mjs';
 import * as handoff from './host-transfer.mjs';
 import { sameServiceMatch, selectExactMatch } from './recording-match.mjs';
 import { autoStartDecision } from '../public/auto-start-policy.js';
+import { resolveQQRecall } from './qq-recall.mjs';
 import QRCode from 'qrcode';
 
 const labels = { spotify: 'Spotify', apple: 'Apple Music' };
@@ -19,11 +20,11 @@ const securityHeaders = {
 function json(value, status = 200) { return new Response(JSON.stringify(value), { status, headers: { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } }); }
 function redirect(location) { return new Response(null, { status: 302, headers: { ...securityHeaders, Location: location, 'Cache-Control': 'no-store' } }); }
 function requireService(provider) { if (!allowedServices.has(provider)) throw fail(400, 'unsupported_service', 'Choose Spotify or Apple Music.'); }
-async function body(request) {
+async function body(request, maxBytes = 32768) {
   if (!request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) throw fail(415, 'invalid_content_type', 'Use Jamama to make this change.');
-  if (Number(request.headers.get('Content-Length')) > 32768) throw fail(413, 'body_too_large', 'That request is too large.');
+  if (Number(request.headers.get('Content-Length')) > maxBytes) throw fail(413, 'body_too_large', 'That request is too large.');
   const reader = request.body?.getReader(), chunks = []; let size = 0;
-  if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.byteLength; if (size > 32768) { await reader.cancel(); throw fail(413, 'body_too_large', 'That request is too large.'); } chunks.push(value); }
+  if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.byteLength; if (size > maxBytes) { await reader.cancel(); throw fail(413, 'body_too_large', 'That request is too large.'); } chunks.push(value); }
   const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   const text = new TextDecoder().decode(bytes);
   try { const value = JSON.parse(text || '{}'); if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error(); return value; }
@@ -171,6 +172,18 @@ export function createCloudApp({ fetchImpl = (...args) => globalThis.fetch(...ar
           if (changed) await clearShared('apple');
         }
         await store.saveSession(session); response = json(status());
+      } else if (url.pathname === '/api/recall/qq/resolve' && method === 'POST') {
+        requireWrite(); connection('apple'); await store.limit(request, 'qq-quiz', 12);
+        const input = await body(request, 65536), own = connection('apple'), generation = own.generation;
+        let result;
+        try {
+          result = await resolveQQRecall(input, { search: (term, offset = 0) => clients.apple.search(own, term, offset), byIsrc: (isrc) => clients.apple.byIsrc(own, isrc) });
+        } catch (error) {
+          if (error.code === 'reconnect_required' && await store.dropProvider(session, 'apple', generation)) await clearShared('apple');
+          throw error;
+        }
+        await store.currentProvider(session, 'apple', generation);
+        response = json(result);
       } else if (url.pathname.startsWith('/api/library/') && method === 'GET') {
         await store.limit(request, 'library', 120);
         const route = url.pathname.match(/^\/api\/library\/(apple|spotify)\/(playlists|albums|tracks|search|recent)(?:\/([^/]+)\/tracks)?$/);

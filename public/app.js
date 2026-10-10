@@ -9,6 +9,7 @@ import { visibleMusicServices, defaultMusicService, chooseVisibleMusicService, c
 
 const $ = (id) => document.getElementById(id);
 const state = { catalog: null, connections: { providers: {} }, session: null, room: null, online: false, events: null, provider: 'all', view: 'library', playlist: null, collection: 'playlists', playlists: new Map(), albums: new Map(), matching: new Set(), matchAttempts: new Set(), matchErrors: new Map(), songs: new Map(), tracks: new Map(), pending: new Set(), mode: 'create', busy: false, deferredTrack: null, loading: new Set(), nearbyTimer: null, qqSearch: null, refreshingLibrary: false, lastLibraryRefresh: 0, refreshBlockedUntil: 0 };
+const recentlyQueued = new Map();
 const escape = (value = '') => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const names = { spotify: 'Spotify', apple: 'Apple Music', qq: 'QQ Music', youtube: 'YouTube Music', ytmusic: 'YouTube Music companion', guest: 'Guest' };
 const order = visibleMusicServices;
@@ -95,7 +96,8 @@ async function api(path, options = {}) {
 }
 function remember(tracks) { for (const track of tracks) state.tracks.set(track.id, track); }
 function songRow(track, index, provider = track.provider) {
-  return `<div class="song-row" role="row" draggable="true" data-track-row="${escape(track.id)}"><span class="song-number" role="cell">${index + 1}</span><div class="song-name" role="cell">${art(track)}<div class="track-info"><strong>${escape(track.title)}</strong><p>${track.artistIsUploader ? 'Channel: ' : ''}${escape(track.artist)}</p></div></div><span class="album-column" role="cell">${escape(track.album)}</span><span class="duration-column" role="cell">${escape(track.duration || '—')}</span><span class="song-action" role="cell"><button class="add-button" data-track="${escape(track.id)}" data-track-provider="${escape(provider)}" aria-label="Add ${escape(track.title)} to shared queue" ${state.pending.has(track.id) ? 'disabled' : ''}>${state.pending.has(track.id) ? '…' : '+'}</button></span></div>`;
+  const pending = state.pending.has(track.id), queued = (recentlyQueued.get(track.id) || 0) > Date.now();
+  return `<div class="song-row" role="row" draggable="true" data-track-row="${escape(track.id)}"><span class="song-number" role="cell">${index + 1}</span><div class="song-name" role="cell">${art(track)}<div class="track-info"><strong>${escape(track.title)}</strong><p>${track.artistIsUploader ? 'Channel: ' : ''}${escape(track.artist)}</p></div></div><span class="album-column" role="cell">${escape(track.album)}</span><span class="duration-column" role="cell">${escape(track.duration || '—')}</span><span class="song-action" role="cell"><button class="add-button ${queued ? 'just-queued' : ''}" data-track="${escape(track.id)}" data-track-provider="${escape(provider)}" aria-label="${queued ? 'Queued' : 'Add'} ${escape(track.title)}${queued ? ' · add again' : ' to shared queue'}" title="${queued ? 'Added to queue' : 'Add to queue'}" ${pending ? 'disabled' : ''}>${pending ? '…' : queued ? '✓' : '+'}</button></span></div>`;
 }
 function searchProviders() { return songSearch.provider === 'all' ? order : [songSearch.provider]; }
 function qqSearchSource() { return songSearch.qqSource === 'auto' ? connected('qq') ? 'library' : 'catalog' : songSearch.qqSource; }
@@ -111,6 +113,7 @@ function renderSongSearch() {
   });
   const pages = searchProviders().map((provider) => songSearch.pages.get(provider));
   const loading = pages.some((page) => page?.loading), count = pages.reduce((sum, page) => sum + (page?.items.length || 0), 0);
+  $('catalog-search-results').setAttribute('aria-busy', String(loading));
   $('catalog-search-status').textContent = !searchProviders().some(canSearch)
     ? `Connect ${providerName(songSearch.provider)} to search its catalog.` : songSearch.term
     ? `${loading ? 'Searching… ' : ''}${count} ${count === 1 ? 'result' : 'results'} loaded for “${songSearch.term}”.`
@@ -205,7 +208,7 @@ function renderLibrary() {
   $('library-subtitle').textContent = 'Browse your music and add songs to the shared queue.';
   if (state.provider === 'youtube') $('library-subtitle').textContent = 'Playlists you own on YouTube and YouTube Music, connected through Google.';
   if (state.provider === 'ytmusic') $('library-subtitle').textContent = 'Real playlists synced by your desktop companion.';
-  $('breadcrumb').textContent = state.playlist ? state.playlist.name : state.view === 'accounts' ? 'Music accounts' : state.provider === 'all' ? 'Your Library' : providerName(state.provider);
+  $('breadcrumb').textContent = { search: 'Search', taste: 'Shared taste', accounts: 'Music accounts' }[state.view] || state.playlist?.name || 'Your library';
   const publicSearch = publicQQSearch();
   $('search-input').placeholder = publicSearch ? 'Search QQ Music songs' : state.playlist ? state.playlist.kind === 'album' ? 'Search this album' : 'Search this playlist' : state.collection === 'albums' ? 'Search loaded albums' : 'Search your library';
   $('search-input').setAttribute('aria-label', publicSearch ? 'Search public QQ Music songs' : state.playlist ? state.playlist.kind === 'album' ? 'Search loaded album songs' : 'Search loaded playlist songs' : state.collection === 'albums' ? 'Search loaded albums' : 'Search displayed library');
@@ -243,7 +246,7 @@ function renderLibrary() {
   const loadingLibrary = visibleProviders().some((id) => state.loading.has(collectionLoadingKey(id)));
   const canUseMacLibrary = visibleProviders().includes('qq') && !connected('qq') && state.connections.providers.qq?.capabilities?.localLibrary;
   $('playlist-grid').innerHTML = lists.map((list) => `<button class="playlist-card" data-playlist-key="${escape(playlistKey(list))}"><div class="playlist-cover">${art(list, list.saved ? 'saved-art' : '')}</div><div class="playlist-copy"><h3>${escape(list.name)}</h3><p>${list.trackCount == null ? '' : `${list.trackCount} ${list.kind === 'album' && list.source === 'local_library' ? 'cached ' : ''}${list.trackCount === 1 ? 'song' : 'songs'} · `}${escape(providerName(list.provider))}</p></div></button>`).join('') || (loadingLibrary ? '' : `<div class="real-library-empty"><h3>${hasConnection ? `No ${state.collection} found` : canUseMacLibrary ? 'Use your QQ Music library' : qq ? 'Search for a real song' : 'Your music belongs here'}</h3><p>${hasConnection ? state.collection === 'albums' && visibleProviders().some((provider) => state.albums.get(provider)?.nextOffset != null) ? 'This search covers the albums loaded so far. Load more albums below to include more of your library.' : 'Try another search or refresh your music connection.' : canUseMacLibrary ? 'Your QQ Music playlists are available on this Mac. Load their song lists here without importing or moving them.' : qq ? 'Use the search field above to browse QQ Music’s public catalog. Account playlists are not connected.' : 'Connect Spotify or Apple Music to load your own library. QQ Music search is available now.'}</p>${canUseMacLibrary ? '<button class="button primary" data-connect="qq">Use QQ Music on this Mac</button>' : !hasConnection && !qq ? '<button class="button primary" data-filter="qq">Search QQ Music</button>' : ''}</div>`);
-  $('library-loading').hidden = !loadingLibrary;
+  $('library-grid-view').setAttribute('aria-busy', String(loadingLibrary)); $('library-loading').hidden = !loadingLibrary;
   $('playlist-more').innerHTML = visibleProviders().filter((id) => (state.collection === 'albums' ? state.albums : state.playlists).get(id)?.nextOffset != null).map((id) => `<button class="button secondary" data-more-playlists="${id}">Load more ${providerName(id)} ${state.collection}</button>`).join('');
 }
 function renderTracks() {
@@ -356,7 +359,7 @@ function setView(view) {
   $('app-shell').classList.remove('queue-active');
   state.view = view; $('library-view').hidden = view !== 'library'; $('search-view').hidden = view !== 'search'; $('accounts-view').hidden = view !== 'accounts'; $('taste-view').hidden = view !== 'taste';
   document.querySelectorAll('[data-mobile]').forEach((button) => { const active = button.dataset.mobile === view; button.classList.toggle('active', active); button.setAttribute('aria-current', active ? 'page' : 'false'); });
-  $('breadcrumb').textContent = view === 'accounts' ? 'Music accounts' : state.playlist?.name || (state.provider === 'all' ? 'Your Library' : providerName(state.provider));
+  $('breadcrumb').textContent = { search: 'Search', taste: 'Shared taste', accounts: 'Music accounts' }[view] || state.playlist?.name || 'Your library';
   renderSidebar(); if (view === 'accounts') { renderAccounts(); if (state.connections.providers.apple?.configured && !appleAuthorization.ready && !appleMusicPreparing) void prepareAppleMusic(); } if (view === 'search') { renderSongSearch(); $('catalog-search-input').focus(); }
   if (view === 'taste') {
     tasteUI.provider = chooseConnectedMusicService(tasteUI.provider, connected);
@@ -868,13 +871,32 @@ function renderRoom() {
   }
   renderPlayer();
 }
+function updateAddButtons(trackId) {
+  const pending = state.pending.has(trackId), queued = (recentlyQueued.get(trackId) || 0) > Date.now();
+  const title = trackFor(trackId)?.title || 'Song';
+  document.querySelectorAll('[data-track]').forEach((button) => {
+    if (button.dataset.track !== trackId) return;
+    button.disabled = pending; button.textContent = pending ? '…' : queued ? '✓' : '+';
+    button.classList.toggle('just-queued', queued);
+    button.setAttribute('aria-label', queued ? `${title} queued · add again` : `Add ${title} to shared queue`);
+    button.setAttribute('aria-busy', String(pending)); button.title = queued ? 'Added to queue' : 'Add to queue';
+  });
+}
 async function addTrack(trackId, provider) {
   if (!state.room) { state.deferredTrack = { id: trackId, provider }; openJam('create'); return; }
   if (!state.online) return toast('Reconnecting to your Jam. Try again in a moment.', 'warning');
-  if (state.pending.has(trackId)) return; state.pending.add(trackId); if (state.playlist) renderTracks(); if (state.view === 'search') renderSongSearch();
-  try { const result = await api(`/api/rooms/${state.session.code}/queue`, { method: 'POST', body: { trackId, provider: provider || trackFor(trackId)?.provider || chooseVisibleMusicService(state.provider), requestId: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}` } }); acceptRoom(result.room); toast(`${trackFor(trackId)?.title || 'Song'} added to the queue`, 'success'); }
-  catch (error) { toast(error.message, 'error'); }
-  finally { state.pending.delete(trackId); if (state.playlist) renderTracks(); if (state.view === 'search') renderSongSearch(); }
+  if (state.pending.has(trackId)) return;
+  const session = state.session;
+  state.pending.add(trackId); updateAddButtons(trackId);
+  try {
+    const result = await api(`/api/rooms/${session.code}/queue`, { method: 'POST', body: { trackId, provider: provider || trackFor(trackId)?.provider || chooseVisibleMusicService(state.provider), requestId: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}` } });
+    if (state.session !== session) return;
+    acceptRoom(result.room);
+    const expires = Date.now() + 2400; recentlyQueued.set(trackId, expires);
+    setTimeout(() => { if (recentlyQueued.get(trackId) === expires) { recentlyQueued.delete(trackId); updateAddButtons(trackId); } }, 2400);
+    toast(`${trackFor(trackId)?.title || 'Song'} added to the queue`, 'success');
+  } catch (error) { if (state.session === session) toast(error.message, 'error'); }
+  finally { state.pending.delete(trackId); updateAddButtons(trackId); }
 }
 async function removeEntry(entryId) { try { acceptRoom(await api(`/api/rooms/${state.session.code}/queue`, { method: 'DELETE', body: { entryId } })); } catch (error) { toast(error.message, 'error'); } }
 async function openQQ(entryId, button) { if (button) button.disabled = true; try { const result = await api(`/api/rooms/${state.session.code}/qq/open`, { method: 'POST', body: { entryId } }); toast(result.message || 'Sent to QQ Music on this Mac. Use QQ Music to control playback.', 'warning'); } catch (error) { toast(error.message, 'error'); } finally { if (button?.isConnected) button.disabled = false; } }
@@ -932,6 +954,7 @@ async function finishLeavingRoom() {
 }
 function playerTime(value) { const seconds = Math.floor(Math.max(0, value || 0) / 1000); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
 function renderPlayer() {
+  $('app-shell').classList.toggle('music-playing', Boolean(state.room?.playback.playing));
   const service = state.room?.hostProvider === 'apple' ? 'Apple Music' : 'Spotify';
   $('player-progress').setAttribute('aria-label', `${service} playback progress`);
   const playback = state.room?.playback, track = playback?.currentTrack || (playback?.connected ? state.room?.nowPlaying?.hostTrack : null);

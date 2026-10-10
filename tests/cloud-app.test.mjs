@@ -248,3 +248,26 @@ test('Spotify auto-start sends one confirmed play and host handoff sends only on
   const offeredResponse = await host.request(`/api/rooms/${code}/host/offer`, 'POST', { memberId: joined.memberId }, started.token); assert.equal(offeredResponse.status, 200); const offered = await offeredResponse.json(); assert.equal(offered.room.hostTransfer.phase, 'ready'); assert.equal(commands.length, 2); assert.match(commands[1], /pause$/);
   const accepted = await friend.request(`/api/rooms/${code}/host/accept`, 'POST', { transferId: offered.room.hostTransfer.id, provider: 'apple' }, joined.token); assert.equal(accepted.status, 200); assert.equal((await accepted.json()).hostId, joined.memberId); assert.equal(commands.length, 2);
 });
+
+test('QQ quiz matching requires the user’s Apple connection and returns only confirmed catalog songs', async (t) => {
+  const f = await fixture(t), c = await f.client();
+  const input = { tracks: [{ id: 'qq:42', provider: 'qq', title: 'Shared recording', artist: 'Artist', album: 'Album', durationMs: 180000 }] };
+  assert.equal((await c.request('/api/recall/qq/resolve', 'POST', input)).status, 401);
+  await connectApple(c);
+  const response = await c.request('/api/recall/qq/resolve', 'POST', input); assert.equal(response.status, 200);
+  const result = await response.json(); assert.equal(result.items[0].id, 'apple:123'); assert.equal(result.items[0].source, 'selected_playlist'); assert.equal(result.total, 1); assert.equal(result.skipped, 0);
+  assert.doesNotMatch(JSON.stringify(result), /private-apple-token|qq:42/);
+  assert.ok(f.calls.some(call => call.path === '/v1/catalog/us/search' && call.token === 'private-apple-token'));
+  const store = new Store(f.env), session = await store.session(new Request(origin, { headers: { Cookie: c.cookie } })); assert.equal(session.data.tracks['apple:123'], undefined);
+  const bad = await c.request('/api/recall/qq/resolve', 'POST', { tracks: [{ ...input.tracks[0], cookie: 'private' }] }); assert.equal(bad.status, 400);
+  const csrf = await f.handle(new Request(origin + '/api/recall/qq/resolve', { method: 'POST', headers: { Cookie: c.cookie, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }), f.env); assert.equal(csrf.status, 403);
+});
+
+test('disconnecting Apple during QQ matching cannot publish a stale quiz selection', async (t) => {
+  const entered = gate(), release = gate();
+  const f = await fixture(t, { fetch: async (url) => { if (url.pathname !== '/v1/catalog/us/search') return; entered.resolve(); await release.promise; return new Response(JSON.stringify({ results: { songs: { data: [appleSong()] } } })); } });
+  const c = await f.client(); await connectApple(c);
+  const pending = c.request('/api/recall/qq/resolve', 'POST', { tracks: [{ id: 'qq:42', provider: 'qq', title: 'Shared recording', artist: 'Artist' }] }); await entered.promise;
+  assert.equal((await c.request('/api/connections/apple/disconnect', 'POST', {})).status, 200); release.resolve();
+  assert.equal((await pending).status, 409);
+});
