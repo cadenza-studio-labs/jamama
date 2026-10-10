@@ -1,9 +1,14 @@
 import { Miniflare } from 'miniflare';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 let values = {};
 try { values = JSON.parse(await readFile('.private-runtime.json', 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-values.SESSION_ENCRYPTION_KEY ||= process.env.SESSION_ENCRYPTION_KEY || randomBytes(32).toString('hex');
+if (!values.SESSION_ENCRYPTION_KEY) {
+  await mkdir('.local-runtime', { recursive: true });
+  let localKey;
+  try { localKey = await readFile('.local-runtime/session.key', 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; localKey = randomBytes(32).toString('hex'); await writeFile('.local-runtime/session.key', localKey, { mode: 0o600 }); }
+  values.SESSION_ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_KEY || localKey;
+}
 const preview = new Miniflare({ modules: true, scriptPath: 'dist/server/index.js', port: 4184, host: '127.0.0.1', compatibilityDate: '2025-07-18',
   bindings: { ...values, PUBLIC_URL: 'http://127.0.0.1:4184' }, d1Databases: { DB: 'jamama-preview' }, d1Persist: '.local-runtime/db' });
 const DB = await preview.getD1Database('DB');
