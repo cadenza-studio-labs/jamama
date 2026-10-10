@@ -1,0 +1,13 @@
+node_modules/
+dist/
+site.tar.gz
+.env
+.env.*
+.private-*
+.sites-runtime/
+worker/assets.mjs
+.dev.vars
+.dev.vars.*
+.wrangler/
+.local-runtime/
+wrangler.local.json

@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jamama-cloud",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-10-10",
+  "workers_dev": true,
+  "preview_urls": false,
+  "no_bundle": true,
+  "find_additional_modules": false,
+  "build": {
+    "command": "node scripts/build.mjs"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jamama-cloud",
+      "migrations_dir": "drizzle",
+      "database_id": "c9d671e9-3640-464a-8eec-4725d2bec152"
+    }
+  ],
+  "account_id": "018104eba0cf30cece8ab4e91e545465"
+}

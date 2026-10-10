@@ -1,0 +1,30 @@
+{
+  "name": "jamama",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "validate": "node scripts/validate-artifact.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "dev": "npm run build && node scripts/preview.mjs",
+    "cloud:login": "wrangler login",
+    "cloud:whoami": "wrangler whoami",
+    "cloud:deploy": "npm run cloud:check && npm run build && npm run validate && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:deploy": "npm run cloud:check && wrangler d1 migrations apply DB --remote",
+    "cloud:check": "node scripts/check-cloud-config.mjs"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "esbuild": "^0.25.0",
+    "miniflare": "^4.20260730.0",
+    "wrangler": "^4.149.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
